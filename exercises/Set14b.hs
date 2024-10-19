@@ -10,23 +10,21 @@ module Set14b where
 --
 -- Let's start with some imports:
 
-import Mooc.Todo
-
 -- Utilities
 import qualified Data.ByteString.Lazy as LB
 import Data.Maybe
 import qualified Data.Text as T
-import qualified Data.Text.Read as TR
 import Data.Text.Encoding (encodeUtf8)
-import Text.Read (readMaybe)
-
+import qualified Data.Text.Read as TR
 -- HTTP server
-import Network.Wai (pathInfo, responseLBS, Application)
-import Network.Wai.Handler.Warp (run)
-import Network.HTTP.Types (status200)
 
 -- Database
-import Database.SQLite.Simple (open,execute,execute_,query,query_,Connection,Query(..))
+import Database.SQLite.Simple (Connection, Query (..), execute, execute_, open, query, query_)
+import Mooc.Todo
+import Network.HTTP.Types (status200)
+import Network.Wai (Application, pathInfo, responseLBS)
+import Network.Wai.Handler.Warp (run)
+import Text.Read (readMaybe)
 
 ------------------------------------------------------------------------------
 -- Ex 1: Let's start with implementing some database operations. The
@@ -39,9 +37,13 @@ import Database.SQLite.Simple (open,execute,execute_,query,query_,Connection,Que
 -- these.
 --
 -- Below, you'll find three queries:
+
 -- * initQuery creates the database
+
 -- * depositQuery adds an (account, amount) row into the database
+
 -- * getAllQuery gets all (account, amount) pairs from the database.
+
 --   getAllQuery isn't needed for the implementation, but you can use it
 --   to test your answer.
 --
@@ -60,7 +62,6 @@ import Database.SQLite.Simple (open,execute,execute_,query,query_,Connection,Que
 --   Set14b> query_ db getAllQuery :: IO [(String,Int)]
 --   [("xxx",13),("yyy",5),("xxx",7)]
 
-
 initQuery :: Query
 initQuery = Query (T.pack "CREATE TABLE IF NOT EXISTS events (account TEXT NOT NULL, amount NUMBER NOT NULL);")
 
@@ -76,12 +77,15 @@ getAllQuery = Query (T.pack "SELECT account, amount FROM events;")
 -- NOTE! Do not add anything to the name, otherwise you'll get weird
 -- test failures later.
 openDatabase :: String -> IO Connection
-openDatabase = todo
+openDatabase filename = do
+  db <- open filename
+  execute_ db initQuery
+  return db
 
 -- given a db connection, an account name, and an amount, deposit
 -- should add an (account, amount) row into the database
 deposit :: Connection -> T.Text -> Int -> IO ()
-deposit = todo
+deposit db account amount = execute db depositQuery (account, amount)
 
 ------------------------------------------------------------------------------
 -- Ex 2: Fetching an account's balance. Below you'll find
@@ -112,7 +116,9 @@ balanceQuery :: Query
 balanceQuery = Query (T.pack "SELECT amount FROM events WHERE account = ?;")
 
 balance :: Connection -> T.Text -> IO Int
-balance = todo
+balance db account = do
+  res <- query db balanceQuery [account] :: IO [[Int]]
+  return $ sum $ map sum res
 
 ------------------------------------------------------------------------------
 -- Ex 3: Now that we have the database part covered, let's think about
@@ -120,8 +126,11 @@ balance = todo
 -- users can issue: Deposit and Balance.
 --
 -- The HTTP API will use paths like the following:
+
 -- * /deposit/smith/3 will deposit 3 into the account "smith"
+
 -- * /balance/lopez will query the balance of the account "lopez"
+
 --
 -- Your task is to implement the function parseCommand that takes the
 -- pathInfo (remember: a list of Texts) of a request, and returns the
@@ -151,7 +160,24 @@ parseInt :: T.Text -> Maybe Int
 parseInt = readMaybe . T.unpack
 
 parseCommand :: [T.Text] -> Maybe Command
-parseCommand = todo
+parseCommand [] = Nothing
+parseCommand (x : xs)
+  | x == T.pack "deposit" && length xs == 2 = case parseInt (last xs) of
+      Nothing -> Nothing
+      Just v -> Just $ Deposit (head xs) v
+  | x == T.pack "withdraw" && length xs == 2 = case parseInt (last xs) of
+      Nothing -> Nothing
+      Just v -> Just $ Deposit (head xs) (-v)
+  | x == T.pack "balance" && length xs == 1 = Just $ Balance (head xs)
+  | otherwise = Nothing
+
+-- then do
+--   v <- parseInt (last xs)
+--   let v1 = if x == T.pack "deposit" then v else -v
+-- else
+--   if x == T.pack "balance"
+--     then Just $ Balance (head xs)
+--     else Nothing
 
 ------------------------------------------------------------------------------
 -- Ex 4: Running commands. Implement the IO operation perform that takes a
@@ -177,7 +203,13 @@ parseCommand = todo
 --   "0"
 
 perform :: Connection -> Maybe Command -> IO T.Text
-perform = todo
+perform db Nothing = return $ T.pack "ERROR"
+perform db (Just (Deposit account amount)) = do
+  deposit db account amount
+  return $ T.pack "OK"
+perform db (Just (Balance account)) = do
+  res <- balance db account
+  return $ T.pack (show res)
 
 ------------------------------------------------------------------------------
 -- Ex 5: Next up, let's set up a simple HTTP server. Implement a WAI
@@ -197,7 +229,8 @@ encodeResponse t = LB.fromStrict (encodeUtf8 t)
 -- Remember:
 -- type Application = Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
 simpleServer :: Application
-simpleServer request respond = todo
+simpleServer request respond = do
+  respond $ responseLBS status200 [] (encodeResponse (T.pack "BANK"))
 
 ------------------------------------------------------------------------------
 -- Ex 6: Now we finally have all the pieces we need to actually
@@ -226,7 +259,10 @@ simpleServer request respond = todo
 -- Remember:
 -- type Application = Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
 server :: Connection -> Application
-server db request respond = todo
+server db request respond = do
+  let args = pathInfo request
+  res <- perform db (parseCommand args)
+  respond $ responseLBS status200 [] (encodeResponse res)
 
 port :: Int
 port = 3421
@@ -257,6 +293,7 @@ main = do
 --   - Open <http://localhost:3421/balance/simon> in your browser.
 --     You should see the text 11.
 
+-- see parseCommand
 
 ------------------------------------------------------------------------------
 -- Ex 8: Error handling. Modify the parseCommand function so that it
@@ -276,5 +313,3 @@ main = do
 --    - http://localhost:3421/deposit/pekka/1/3
 --    - http://localhost:3421/balance
 --    - http://localhost:3421/balance/matti/pekka
-
-
